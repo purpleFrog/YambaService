@@ -3,6 +3,7 @@ package com.twitter.university.android.yamba.service;
 import android.app.AlarmManager;
 import android.app.IntentService;
 import android.app.PendingIntent;
+import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
@@ -15,6 +16,7 @@ import com.marakana.android.yamba.clientlib.YambaClientException;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 
 public class YambaService extends IntentService {
@@ -27,6 +29,11 @@ public class YambaService extends IntentService {
         i.putExtra(YambaContract.Service.PARAM_OP, YambaContract.Service.OP_START_POLLING);
         ctxt.startService(i);
     }
+
+    // need a way to hide these...
+    private static final String CONSTRAINT_NEEDS_SYNC = "p_sent is null and p_xact is null";
+    private static final String CONSTRAINT_XACT = "p_xact=?";
+    private static final String CONSTRAINT_ID = "p_id=?";
 
 
     private volatile int pollSize;
@@ -42,8 +49,6 @@ public class YambaService extends IntentService {
         Resources rez = getResources();
         pollSize = rez.getInteger(R.integer.poll_size);
         pollInterval = rez.getInteger(R.integer.poll_interval) * 60 * 1000;
-
-        doStartPoller();
    }
 
     @Override
@@ -61,10 +66,6 @@ public class YambaService extends IntentService {
                 doPost(i.getStringExtra(YambaContract.Service.PARAM_TWEET));
                 break;
 
-            case YambaContract.Service.OP_POLL:
-                doPoll();
-                break;
-
             case YambaContract.Service.OP_START_POLLING:
                 doStartPoller();
                 break;
@@ -73,22 +74,21 @@ public class YambaService extends IntentService {
                 doStopPoller();
                 break;
 
+            case YambaContract.Service.OP_SYNC:
+                doSync();
+                break;
+
             default:
                 Log.e(TAG, "Unexpected op: " + op);
         }
     }
 
     private void doPost(String tweet) {
-        boolean succeeded = false;
-        try {
-            getClient().postStatus(tweet);
-            if (BuildConfig.DEBUG) { Log.d(TAG, "post succeeded"); }
-            succeeded = true;
-        }
-        catch (YambaClientException e) {
-            Log.e(TAG, "Post failed");
-        }
-        notifyPost(succeeded);
+        ContentValues cv = new ContentValues();
+        cv.put(YambaContract.Posts.Columns.TWEET, tweet);
+        cv.put(YambaContract.Posts.Columns.TIMESTAMP, System.currentTimeMillis());
+        getContentResolver().insert(YambaContract.Posts.URI, cv);
+        startService(createPollIntent());
     }
 
     private void doStartPoller() {
@@ -98,41 +98,84 @@ public class YambaService extends IntentService {
                     AlarmManager.RTC,
                     System.currentTimeMillis() + 100,
                     pollInterval,
-                    createPollingIntent());
+                    createPollerIntent());
     }
 
     private void doStopPoller() {
         ((AlarmManager) getSystemService(Context.ALARM_SERVICE))
-                .cancel(createPollingIntent());
+                .cancel(createPollerIntent());
     }
 
-    private void doPoll() {
-        if (BuildConfig.DEBUG) { Log.d(TAG, "poll"); }
+    private void doSync() {
+        if (BuildConfig.DEBUG) { Log.d(TAG, "sync"); }
 
-        int n = 0;
-        try { n = parseTimeline(getClient().getTimeline(pollSize)); }
+        YambaClient client;
+        try { client = getClient(); }
         catch (YambaClientException e) {
-            Log.e(TAG, "Poll failed");
+            Log.e(TAG, "Failed to get client", e);
+            return;
         }
 
-        if (0 < n) { notifyTimelineUpdate(n); }
+        try { notifyPost(postPending(client)); }
+        catch (YambaClientException e) {
+            Log.e(TAG, "post failed", e);
+        }
+
+        try { notifyTimelineUpdate(parseTimeline(client.getTimeline(pollSize))); }
+        catch (YambaClientException e) {
+            Log.e(TAG, "poll failed", e);
+            e.printStackTrace();
+        }
     }
 
-    private void notifyPost(boolean succeeded) {
-        Intent i = new Intent(YambaContract.Service.ACTION_POST_COMPLETE);
-        i.putExtra(YambaContract.Service.PARAM_POST_SUCCEEDED, succeeded);
-        if (BuildConfig.DEBUG) { Log.d(TAG, "post: " + succeeded); }
-        sendBroadcast(i, YambaContract.Service.PERMISSION_RECEIVE_POST_COMPLETE);
+    private int postPending(YambaClient client) throws YambaClientException {
+        ContentResolver cr = getContentResolver();
+
+        String xactId = UUID.randomUUID().toString();
+
+        ContentValues row = new ContentValues();
+        row.put(YambaContract.Posts.Columns.TRANSACTION, xactId);
+
+        int n = cr.update(YambaContract.Posts.URI, row, CONSTRAINT_NEEDS_SYNC, null);
+
+        if (BuildConfig.DEBUG) { Log.d(TAG, "pending: " + n); }
+        if (0 >= n) { return 0; }
+
+        Cursor cur = null;
+        try {
+            cur = cr.query(
+                YambaContract.Posts.URI,
+                null,
+                YambaContract.Posts.Columns.TRANSACTION + "=?",
+                new String[] { xactId },
+                YambaContract.Posts.Columns.TIMESTAMP + " ASC");
+            return postTweets(cur, client);
+        }
+        finally {
+            if (null != cur) { cur.close(); }
+            row.clear();
+            row.putNull(YambaContract.Posts.Columns.TRANSACTION);
+            cr.update(YambaContract.Posts.URI, row, CONSTRAINT_XACT, new String[] { xactId });
+        }
     }
 
-    private PendingIntent createPollingIntent() {
-        Intent i = new Intent(this, YambaService.class);
-        i.putExtra(YambaContract.Service.PARAM_OP, YambaContract.Service.OP_POLL);
-        return PendingIntent.getService(
-            this,
-            POLLER,
-            i,
-            PendingIntent.FLAG_UPDATE_CURRENT);
+    private int postTweets(Cursor c, YambaClient client) throws YambaClientException {
+        int idIdx = c.getColumnIndex(YambaContract.Posts.Columns.ID);
+        int tweetIdx = c.getColumnIndex(YambaContract.Posts.Columns.TWEET);
+
+        int n = 0;
+        ContentValues row = new ContentValues();
+        while (c.moveToNext()) {
+            client.postStatus(c.getString(tweetIdx));
+            row.clear();
+            row.put(YambaContract.Posts.Columns.SENT, System.currentTimeMillis());
+            n += getContentResolver().update(
+                YambaContract.Posts.URI,
+                row,
+                CONSTRAINT_ID,
+                new String[] { c.getString(idIdx) });
+        }
+        return n;
     }
 
     private int parseTimeline(List<YambaClient.Status> timeline) {
@@ -181,11 +224,34 @@ public class YambaService extends IntentService {
         }
     }
 
+    private void notifyPost(int count) {
+        if (BuildConfig.DEBUG) { Log.d(TAG, "post: " + count); }
+        if (count <= 0) { return; }
+        Intent i = new Intent(YambaContract.Service.ACTION_POST_COMPLETE);
+        i.putExtra(YambaContract.Service.PARAM_POST_SUCCEEDED, count);
+        sendBroadcast(i, YambaContract.Service.PERMISSION_RECEIVE_POST_COMPLETE);
+    }
+
     private void notifyTimelineUpdate(int count) {
+        if (BuildConfig.DEBUG) { Log.d(TAG, "timeline: " + count); }
+        if (count <= 0) { return; }
         Intent i = new Intent(YambaContract.Service.ACTION_TIMELINE_UPDATED);
         i.putExtra(YambaContract.Service.PARAM_COUNT, count);
-        if (BuildConfig.DEBUG) { Log.d(TAG, "timeline: " + count); }
         sendBroadcast(i, YambaContract.Service.PERMISSION_RECEIVE_TIMELINE_UPDATE);
+    }
+
+    private PendingIntent createPollerIntent() {
+        return PendingIntent.getService(
+            this,
+            POLLER,
+            createPollIntent(),
+            PendingIntent.FLAG_UPDATE_CURRENT);
+    }
+
+    private Intent createPollIntent() {
+        Intent i = new Intent(this, YambaService.class);
+        i.putExtra(YambaContract.Service.PARAM_OP, YambaContract.Service.OP_SYNC);
+        return i;
     }
 
     private YambaClient getClient() throws YambaClientException {
