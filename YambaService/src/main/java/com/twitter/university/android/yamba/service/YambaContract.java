@@ -28,7 +28,7 @@ public class YambaContract {
         // method id parameter value: post a message.  Parameter is the message
         public static final int OP_POST = -1;
         // method id parameter value: poll once.  No parameters.
-        public static final int OP_SYNC = -2;
+        public static final int OP_POLL = -2;
         // method id parameter value: start polling.  No parameters.
         public static final int OP_START_POLLING = -3;
         // method id parameter value: stop polling.  No parameters.
