@@ -22,8 +22,6 @@ class YambaDbHelper extends SQLiteOpenHelper {
     static final String COL_XACT = "p_xact";
     static final String COL_SENT = "p_sent";
 
-    private static final String TABLE_TIMELINE_V1 = "timeline";
-
 
     public YambaDbHelper(Context context) {
         super(context, DATABASE, null, VERSION);
@@ -52,7 +50,6 @@ class YambaDbHelper extends SQLiteOpenHelper {
         Log.d(TAG, "update db");
         db.execSQL("DROP TABLE IF EXISTS " + TABLE_POSTS);
         db.execSQL("DROP TABLE IF EXISTS " + TABLE_TIMELINE);
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_TIMELINE_V1);
         onCreate(db);
     }
 }
