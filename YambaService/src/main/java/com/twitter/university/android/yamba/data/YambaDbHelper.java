@@ -13,12 +13,14 @@ class YambaDbHelper extends SQLiteOpenHelper {
     public static final int VERSION = 3;
 
     static final String TABLE_TIMELINE = "p_timeline";
+    static final String TABLE_POSTS = "p_posts";
+
     static final String COL_ID = "p_id";
     static final String COL_TIMESTAMP = "p_timestamp";
     static final String COL_HANDLE = "p_handle";
     static final String COL_TWEET = "p_tweet";
-
-    private static final String TABLE_TIMELINE_V1 = "timeline";
+    static final String COL_XACT = "p_xact";
+    static final String COL_SENT = "p_sent";
 
     public YambaDbHelper(Context context) {
         super(context, DATABASE, null, VERSION);
@@ -33,12 +35,20 @@ class YambaDbHelper extends SQLiteOpenHelper {
                 + COL_TIMESTAMP + " INTEGER NOT NULL,"
                 + COL_HANDLE + " STRING NOT NULL,"
                 + COL_TWEET + " STRING" + ")");
+        db.execSQL(
+            "CREATE TABLE " + TABLE_POSTS + "("
+                + COL_ID + " INTEGER PRIMARY KEY AUTOINCREMENT,"
+                + COL_TIMESTAMP + " INTEGER NOT NULL,"
+                + COL_XACT + " STRING DEFAULT(NULL),"
+                + COL_SENT + " STRING DEFAULT(NULL),"
+                + COL_TWEET + " STRING NOT NULL" + ")");
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         Log.d(TAG, "update db");
-        db.execSQL("DROP TABLE " + TABLE_TIMELINE_V1);
+        db.execSQL("DROP TABLE " + TABLE_TIMELINE);
+        db.execSQL("DROP TABLE " + TABLE_POSTS);
         onCreate(db);
     }
 }
