@@ -18,6 +18,11 @@ import java.util.Map;
 public class YambaProvider extends ContentProvider {
     private static final String TAG = "PROVIDER";
 
+    // need a way to hide these...
+    public static final String CONSTRAINT_NEEDS_SYNC = "p_sent is null and p_xact is null";
+    public static final String CONSTRAINT_XACT = "p_xact=?";
+    public static final String CONSTRAINT_ID = "p_id=?";
+
     private static final int POST_ITEM_TYPE = 1;
     private static final int POST_DIR_TYPE = 2;
     private static final int TIMELINE_ITEM_TYPE = 3;

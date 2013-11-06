@@ -13,6 +13,7 @@ import android.util.Log;
 
 import com.marakana.android.yamba.clientlib.YambaClient;
 import com.marakana.android.yamba.clientlib.YambaClientException;
+import com.twitter.university.android.yamba.data.YambaProvider;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -29,12 +30,6 @@ public class YambaService extends IntentService {
         i.putExtra(YambaContract.Service.PARAM_OP, YambaContract.Service.OP_START_POLLING);
         ctxt.startService(i);
     }
-
-    // need a way to hide these...
-    private static final String CONSTRAINT_NEEDS_SYNC = "p_sent is null and p_xact is null";
-    private static final String CONSTRAINT_XACT = "p_xact=?";
-    private static final String CONSTRAINT_ID = "p_id=?";
-
 
     private volatile int pollSize;
     private volatile long pollInterval;
@@ -94,25 +89,30 @@ public class YambaService extends IntentService {
     private void doStartPoller() {
         if (0 >= pollInterval) { return; }
         ((AlarmManager) getSystemService(Context.ALARM_SERVICE))
-                .setInexactRepeating(
-                    AlarmManager.RTC,
-                    System.currentTimeMillis() + 100,
-                    pollInterval,
-                    createPollerIntent());
+            .setInexactRepeating(
+                AlarmManager.RTC,
+                System.currentTimeMillis() + 100,
+                pollInterval,
+                createPollerIntent());
     }
 
     private void doStopPoller() {
         ((AlarmManager) getSystemService(Context.ALARM_SERVICE))
-                .cancel(createPollerIntent());
+            .cancel(createPollerIntent());
     }
 
     private void doSync() {
         if (BuildConfig.DEBUG) { Log.d(TAG, "sync"); }
 
-        YambaClient client;
+        YambaClient client = null;
         try { client = getClient(); }
         catch (YambaClientException e) {
             Log.e(TAG, "Failed to get client", e);
+            return;
+        }
+
+        if (null == client) {
+            Log.e(TAG, "Client is null");
             return;
         }
 
@@ -136,7 +136,7 @@ public class YambaService extends IntentService {
         ContentValues row = new ContentValues();
         row.put(YambaContract.Posts.Columns.TRANSACTION, xactId);
 
-        int n = cr.update(YambaContract.Posts.URI, row, CONSTRAINT_NEEDS_SYNC, null);
+        int n = cr.update(YambaContract.Posts.URI, row, YambaProvider.CONSTRAINT_NEEDS_SYNC, null);
 
         if (BuildConfig.DEBUG) { Log.d(TAG, "pending: " + n); }
         if (0 >= n) { return 0; }
@@ -155,7 +155,7 @@ public class YambaService extends IntentService {
             if (null != cur) { cur.close(); }
             row.clear();
             row.putNull(YambaContract.Posts.Columns.TRANSACTION);
-            cr.update(YambaContract.Posts.URI, row, CONSTRAINT_XACT, new String[] { xactId });
+            cr.update(YambaContract.Posts.URI, row, YambaProvider.CONSTRAINT_XACT, new String[] { xactId });
         }
     }
 
@@ -172,7 +172,7 @@ public class YambaService extends IntentService {
             n += getContentResolver().update(
                 YambaContract.Posts.URI,
                 row,
-                CONSTRAINT_ID,
+                YambaProvider.CONSTRAINT_ID,
                 new String[] { c.getString(idIdx) });
         }
         return n;
